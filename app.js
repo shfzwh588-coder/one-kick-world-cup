@@ -531,6 +531,7 @@ const stadiumSound = {
   master: null,
   crowd: null,
   crowdGain: null,
+  goalCheerOutput: null,
   backingTrack: null,
   backingTrackFadeFrame: null,
   goalCheer: null,
@@ -548,7 +549,8 @@ const BACKGROUND_TRACK_VOLUME = 0.62;
 const BACKGROUND_TRACK_LOOP_SECONDS = 60;
 const BACKGROUND_TRACK_FADE_SECONDS = 2.8;
 const GOAL_CHEER_SRC = "./assets/goal-cheer.wav";
-const GOAL_CHEER_VOLUME = 0.92;
+const GOAL_CHEER_VOLUME = 0.96;
+const GOAL_CHEER_WEB_AUDIO_BOOST = 1.45;
 const GOAL_CHEER_DUCK_MULTIPLIER = 0.32;
 const GOAL_CHEER_DUCK_MS = 2400;
 const GAME_IMAGE_ASSETS = [
@@ -610,8 +612,11 @@ function createStadiumSound() {
 
   const ctx = new AudioContextClass();
   const master = ctx.createGain();
+  const goalCheerOutput = ctx.createGain();
   master.gain.value = 0;
   master.connect(ctx.destination);
+  goalCheerOutput.gain.value = 1;
+  goalCheerOutput.connect(ctx.destination);
 
   const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const noiseData = noiseBuffer.getChannelData(0);
@@ -635,6 +640,7 @@ function createStadiumSound() {
   stadiumSound.master = master;
   stadiumSound.crowd = crowd;
   stadiumSound.crowdGain = crowdGain;
+  stadiumSound.goalCheerOutput = goalCheerOutput;
 }
 
 function createBackingTrack() {
@@ -691,7 +697,7 @@ function loadGoalCheerBuffer() {
 }
 
 function playGoalCheerBuffer() {
-  if (!stadiumSound.goalCheerBuffer || !stadiumSound.ctx || !stadiumSound.master) return false;
+  if (!stadiumSound.goalCheerBuffer || !stadiumSound.ctx || !stadiumSound.goalCheerOutput) return false;
 
   if (stadiumSound.goalCheerSource) {
     try {
@@ -705,8 +711,8 @@ function playGoalCheerBuffer() {
   const source = stadiumSound.ctx.createBufferSource();
   const gain = stadiumSound.ctx.createGain();
   source.buffer = stadiumSound.goalCheerBuffer;
-  gain.gain.value = GOAL_CHEER_VOLUME;
-  source.connect(gain).connect(stadiumSound.master);
+  gain.gain.value = GOAL_CHEER_VOLUME * GOAL_CHEER_WEB_AUDIO_BOOST;
+  source.connect(gain).connect(stadiumSound.goalCheerOutput);
   source.onended = () => {
     if (stadiumSound.goalCheerSource === source) stadiumSound.goalCheerSource = null;
   };

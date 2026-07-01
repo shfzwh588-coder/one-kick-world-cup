@@ -534,6 +534,9 @@ const stadiumSound = {
   backingTrack: null,
   backingTrackFadeFrame: null,
   goalCheer: null,
+  goalCheerBuffer: null,
+  goalCheerLoading: null,
+  goalCheerSource: null,
   cheerDuckUntil: 0,
   usingBackingTrack: false,
   chantTimer: null,
@@ -660,6 +663,58 @@ function createGoalCheer() {
   return cheer;
 }
 
+function decodeAudioBuffer(ctx, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    const promise = ctx.decodeAudioData(arrayBuffer, resolve, reject);
+    if (promise?.then) promise.then(resolve).catch(reject);
+  });
+}
+
+function loadGoalCheerBuffer() {
+  if (!stadiumSound.ctx) return Promise.resolve(null);
+  if (stadiumSound.goalCheerBuffer) return Promise.resolve(stadiumSound.goalCheerBuffer);
+  if (stadiumSound.goalCheerLoading) return stadiumSound.goalCheerLoading;
+
+  stadiumSound.goalCheerLoading = fetch(GOAL_CHEER_SRC)
+    .then((response) => {
+      if (!response.ok) throw new Error("Goal cheer unavailable");
+      return response.arrayBuffer();
+    })
+    .then((arrayBuffer) => decodeAudioBuffer(stadiumSound.ctx, arrayBuffer))
+    .then((buffer) => {
+      stadiumSound.goalCheerBuffer = buffer;
+      return buffer;
+    })
+    .catch(() => null);
+
+  return stadiumSound.goalCheerLoading;
+}
+
+function playGoalCheerBuffer() {
+  if (!stadiumSound.goalCheerBuffer || !stadiumSound.ctx || !stadiumSound.master) return false;
+
+  if (stadiumSound.goalCheerSource) {
+    try {
+      stadiumSound.goalCheerSource.stop();
+    } catch (error) {
+      // Source may have already ended.
+    }
+    stadiumSound.goalCheerSource = null;
+  }
+
+  const source = stadiumSound.ctx.createBufferSource();
+  const gain = stadiumSound.ctx.createGain();
+  source.buffer = stadiumSound.goalCheerBuffer;
+  gain.gain.value = GOAL_CHEER_VOLUME;
+  source.connect(gain).connect(stadiumSound.master);
+  source.onended = () => {
+    if (stadiumSound.goalCheerSource === source) stadiumSound.goalCheerSource = null;
+  };
+  stadiumSound.goalCheerSource = source;
+  source.start();
+  return true;
+}
+
 function backingTrackVolumeAt(time) {
   const loopEnd = BACKGROUND_TRACK_LOOP_SECONDS;
   const fade = BACKGROUND_TRACK_FADE_SECONDS;
@@ -755,9 +810,18 @@ function stopBackingTrack() {
 }
 
 function stopGoalCheer() {
-  if (!stadiumSound.goalCheer) return;
-  stadiumSound.goalCheer.pause();
-  stadiumSound.goalCheer.currentTime = 0;
+  if (stadiumSound.goalCheerSource) {
+    try {
+      stadiumSound.goalCheerSource.stop();
+    } catch (error) {
+      // Source may have already ended.
+    }
+    stadiumSound.goalCheerSource = null;
+  }
+  if (stadiumSound.goalCheer) {
+    stadiumSound.goalCheer.pause();
+    stadiumSound.goalCheer.currentTime = 0;
+  }
   stadiumSound.cheerDuckUntil = 0;
 }
 
@@ -782,6 +846,7 @@ function startStadiumSound() {
   stadiumSound.ctx.resume();
   stadiumSound.enabled = true;
   createGoalCheer();
+  loadGoalCheerBuffer();
   startBackingTrack();
   updateSoundButtons();
 }
@@ -826,13 +891,25 @@ function playKickSound() {
 function playGoalCheer() {
   if (!stadiumSound.enabled) return;
 
+  stadiumSound.cheerDuckUntil = performance.now() + GOAL_CHEER_DUCK_MS;
+  syncBackingTrackLoop();
+  if (playGoalCheerBuffer()) return;
+
   const cheer = createGoalCheer();
   cheer.pause();
   cheer.currentTime = 0;
   cheer.volume = GOAL_CHEER_VOLUME;
-  stadiumSound.cheerDuckUntil = performance.now() + GOAL_CHEER_DUCK_MS;
-  syncBackingTrackLoop();
-  cheer.play().catch(() => {});
+  const fallbackPromise = cheer
+    .play()
+    .then(() => true)
+    .catch(() => false);
+
+  loadGoalCheerBuffer().then((buffer) => {
+    if (!stadiumSound.enabled || !buffer) return;
+    fallbackPromise.then((fallbackPlayed) => {
+      if (!fallbackPlayed) playGoalCheerBuffer();
+    });
+  });
 }
 
 function playCrowdReaction(goal) {
